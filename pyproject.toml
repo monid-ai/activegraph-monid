@@ -1,0 +1,29 @@
+[project]
+name = "monid-activegraph"
+version = "0.1.0"
+description = "Auditable cross-source research agent built on activegraph + monid."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "activegraph[anthropic]>=1.0.5.post2",
+    "click>=8.4.0",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.14.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/research_agent"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[project.scripts]
+research-agent = "research_agent.cli:main"
+research-agent-fork = "research_agent.fork_cli:main"
+

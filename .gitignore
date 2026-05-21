@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and local state
+.env
+
+# Runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+fixtures/monid/
+fixtures/llm/
+traces/
+
