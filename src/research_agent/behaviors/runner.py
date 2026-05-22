@@ -16,17 +16,21 @@ from ._helpers import budget_exhausted
 
 
 def _extract_text(item) -> str:
-    """Best-effort textual representation of a heterogeneous result item."""
+    """Best-effort textual representation of a heterogeneous result item.
+
+    Capped at 2000 chars so the extractor LLM sees a real snippet without
+    blowing the prompt budget across many posts.
+    """
     if isinstance(item, dict):
         for key in ("text", "content", "snippet", "title", "name", "summary"):
             v = item.get(key)
             if isinstance(v, str) and v.strip():
-                return v.strip()
+                return v.strip()[:2000]
         # Fallback: serialize a small slice
-        return json.dumps(item)[:600]
+        return json.dumps(item)[:2000]
     if isinstance(item, str):
-        return item.strip()[:600]
-    return str(item)[:600]
+        return item.strip()[:2000]
+    return str(item)[:2000]
 
 
 @behavior(name="runner", on=["endpoint.input_ready"])
@@ -67,13 +71,15 @@ def runner(event, graph, ctx):
         if item is None:
             continue
         url = item.get("url") if isinstance(item, dict) else None
-        raw = item if isinstance(item, dict) else {"value": item}
+        # Raw JSON is NOT stored on the post object — it bloats LLM prompts
+        # by 40-100KB per post (we hit a 200K-token overflow on a 18-post run).
+        # The full raw response is recoverable from the monid client's
+        # on-disk cache (fixtures/monid/*.json) via monid_run_id if needed.
         post = graph.add_object(
             "post",
             {
                 "text": _extract_text(item),
                 "url": url,
-                "raw_json": raw,
                 "source_id": p["source_id"],
                 "task_id": p["task_id"],
                 "strategy_id": p["strategy_id"],

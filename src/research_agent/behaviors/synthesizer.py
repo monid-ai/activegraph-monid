@@ -85,7 +85,24 @@ def make_synthesizer(memo_mode: str = "auto"):
         description=description,
         output_schema=MemoOutput,
         creates=["memo"],
-        view={"recent_events": 2000},
+        # Explicit view: structured objects only. Posts ARE included
+        # because the cost-summing loop below reads `post.monid_cost`,
+        # but they're now small (raw_json was dropped in runner.py).
+        # Recent events kept at 2000 so the synthesizer can see the
+        # full run timeline for context.
+        view={
+            "include_types": [
+                "strategy",
+                "task",
+                "claim",
+                "source",
+                "post",
+                "query",
+                "memo",
+                "budget_state",
+            ],
+            "recent_events": 2000,
+        },
         deterministic=True,
     )
     def synthesizer(event, graph, ctx, llm_output: MemoOutput):

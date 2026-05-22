@@ -54,6 +54,23 @@ def _strategy_has_claims(ctx, sid: str) -> bool:
     ),
     output_schema=StrategyVerdict,
     creates=[],
+    # Scope the LLM's view: only structured objects (strategy / task /
+    # claim / source / query / budget_state / overrides). Posts are
+    # excluded — they can carry KBs of text each, and the claims already
+    # represent the extracted evidence. Without this filter, the default
+    # view loads all 18+ posts and overflows Claude's 200K-token cap.
+    view={
+        "include_types": [
+            "strategy",
+            "task",
+            "claim",
+            "source",
+            "query",
+            "budget_state",
+            "overrides",
+        ],
+        "recent_events": 50,
+    },
     deterministic=True,
 )
 def strategy_evaluator(event, graph, ctx, llm_output: StrategyVerdict):

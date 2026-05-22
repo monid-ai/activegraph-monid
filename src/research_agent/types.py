@@ -66,7 +66,6 @@ class InputSpecObj(BaseModel):
 class PostObj(BaseModel):
     text: str
     url: str | None = None
-    raw_json: dict[str, Any] = Field(default_factory=dict)
     source_id: str
     task_id: str
     strategy_id: str
