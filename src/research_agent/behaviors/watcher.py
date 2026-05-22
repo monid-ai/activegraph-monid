@@ -39,6 +39,7 @@ _WATCHED = [
     "research.run.failed",
     "task.results.ready",
     "strategy.complete",
+    "strategy.capped",
     "strategy.abandoned",
     "strategy.needs_more_tasks",
     "budget.exhausted",
@@ -57,6 +58,10 @@ def _short(s: str | None, n: int = 60) -> str:
 # dict tracks the next sequence number per kind.
 _FRIENDLY: dict[str, str] = {}
 _NEXT_SEQ: dict[str, int] = {}
+
+# Running monid cost across [run] events (for the watcher's progress
+# line). Reset at the start of each CLI invocation.
+_RUNNING_MONID_COST: dict[str, float] = {"total": 0.0}
 
 
 def _friendly(real_id: Any, kind: str) -> str:
@@ -78,6 +83,7 @@ def reset_friendly() -> None:
     """Wipe the alias state. Call once at the start of each CLI run."""
     _FRIENDLY.clear()
     _NEXT_SEQ.clear()
+    _RUNNING_MONID_COST["total"] = 0.0
 
 
 @behavior(name="watcher", on=_WATCHED)
@@ -117,9 +123,11 @@ def watcher(event, graph, ctx):
     elif t == "research.run.completed":
         cost = float(p.get("cost", 0.0) or 0.0)
         n = int(p.get("post_count", 0) or 0)
+        _RUNNING_MONID_COST["total"] += cost
+        running = _RUNNING_MONID_COST["total"]
         click.echo(
             f"[run]      {_friendly(p.get('task_id'), 'task')} "
-            f"-> {n} posts (${cost:.4f})"
+            f"-> {n} posts (${cost:.4f})  total=${running:.4f}"
         )
     elif t == "research.run.failed":
         click.echo(
@@ -136,6 +144,11 @@ def watcher(event, graph, ctx):
             f"[strategy] {_friendly(p.get('strategy_id'), 'strategy')} "
             f"-> complete ({_short(p.get('summary'))})"
         )
+    elif t == "strategy.capped":
+        click.echo(
+            f"[strategy] {_friendly(p.get('strategy_id'), 'strategy')} "
+            f"-> capped: {_short(p.get('reason'))} (partial evidence kept)"
+        )
     elif t == "strategy.abandoned":
         click.echo(
             f"[strategy] {_friendly(p.get('strategy_id'), 'strategy')} "
@@ -150,10 +163,18 @@ def watcher(event, graph, ctx):
         spent = float(p.get("monid_spent_usd", 0.0))
         limit = float(p.get("limit_usd", 0.0))
         endpoints = p.get("endpoint_count")
-        max_e = p.get("limit_endpoints")
+        max_e = p.get("limit_endpoints") or 0
+        trip = p.get("trip_reason") or (
+            "endpoints" if (max_e and endpoints and endpoints >= max_e) else "usd"
+        )
+        if trip == "endpoints":
+            reason = f"endpoint count ({endpoints}/{max_e})"
+        else:
+            reason = f"USD spend (${spent:.4f}/${limit:.2f})"
         click.echo(
-            f"[budget]   EXHAUSTED spent=${spent:.4f}/${limit:.2f}  "
-            f"endpoints={endpoints}/{max_e}"
+            f"[budget]   EXHAUSTED by {reason}.  "
+            f"spent=${spent:.4f}/${limit:.2f}  "
+            f"endpoints={endpoints}/{max_e or '\u221e'}"
         )
     elif t == "claim.unsupported":
         click.echo(

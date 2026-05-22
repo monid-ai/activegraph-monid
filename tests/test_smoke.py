@@ -18,28 +18,48 @@ def test_imports_and_registers():
         register_all,
     )
 
-    assert behavior_count() >= 13
     # ALL_BEHAVIORS is module-level only (no factory instances).
-    assert len(ALL_BEHAVIORS) == behavior_count() - 2
+    # behavior_count() includes factory-built decomposer/planner/synthesizer.
+    assert behavior_count() == len(ALL_BEHAVIORS) + 3
 
     # Default-cap registration.
     registry = register_all()
     names = [b.name for b in registry]
-    assert len(names) == behavior_count(), (
-        f"unexpected behavior count: {len(names)} (expected {behavior_count()})"
-    )
+    assert len(names) == behavior_count()
     assert len(names) == len(set(names)), f"duplicate behavior names: {names}"
 
-    # Re-register: should be idempotent.
+    # Re-register: idempotent.
     registry2 = register_all()
-    names2 = [b.name for b in registry2]
-    assert len(names2) == behavior_count(), (
-        f"re-registration changed the count: {len(names2)}"
-    )
+    assert len(registry2) == behavior_count()
 
-    # Custom-cap registration works too.
-    registry3 = register_all(max_strategies=2, max_tasks_per_strategy=1)
+    # Custom-cap registration works.
+    registry3 = register_all(
+        max_strategies=2,
+        max_tasks_per_strategy=1,
+        memo_mode="short",
+    )
     assert len(registry3) == behavior_count()
+
+
+def test_memo_modes_accepted():
+    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+    os.environ.setdefault("MONID_API_KEY", "test-key")
+    from research_agent.behaviors import register_all
+
+    for mode in ("short", "auto", "long", "detailed"):
+        registry = register_all(memo_mode=mode)
+        names = [b.name for b in registry]
+        assert "synthesizer" in names
+
+
+def test_memo_mode_invalid():
+    import pytest
+    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+    os.environ.setdefault("MONID_API_KEY", "test-key")
+    from research_agent.behaviors.synthesizer import make_synthesizer
+
+    with pytest.raises(ValueError):
+        make_synthesizer(memo_mode="medium")
 
 
 def test_behavior_subscriptions():
@@ -59,6 +79,7 @@ def test_behavior_subscriptions():
         "strategy.proposed",
         "strategy.needs_more_tasks",
         "strategy.complete",
+        "strategy.capped",
         "strategy.abandoned",
         "task.proposed",
         "task.candidates.ready",
@@ -78,6 +99,7 @@ def test_types_schemas():
         InputSpec,
         MemoOutput,
         RouteChoice,
+        StrategyOutcome,
         StrategyVerdict,
         make_decomposition_schema,
         make_task_plan_schema,
@@ -98,6 +120,11 @@ def test_types_schemas():
     StrategyVerdict.model_validate({"verdict": "complete"})
     MemoOutput.model_validate({"summary": "s"})
     ExtractedClaims.model_validate({"claims": []})
+
+    # `capped` is now a legal outcome status.
+    StrategyOutcome.model_validate(
+        {"strategy_id": "x", "status": "capped", "one_line_summary": "y"}
+    )
 
 
 def test_factory_caps_enforced():

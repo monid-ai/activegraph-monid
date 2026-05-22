@@ -34,7 +34,7 @@ class StrategyObj(BaseModel):
     name: str
     rationale: str
     expected_kind: str = "general"
-    status: Literal["active", "complete", "abandoned"] = "active"
+    status: Literal["active", "complete", "capped", "abandoned"] = "active"
     abandon_reason: str | None = None
     round_count: int = 0
 
@@ -218,7 +218,7 @@ class ExtractedClaims(BaseModel):
 
 class StrategyOutcome(BaseModel):
     strategy_id: str
-    status: Literal["complete", "abandoned"]
+    status: Literal["complete", "capped", "abandoned"]
     one_line_summary: str
 
 

@@ -1,18 +1,19 @@
-"""L5 strategy_evaluator: decide if a strategy is done / needs more / abandoned.
+"""L5 strategy_evaluator: decide if a strategy is done / needs more / capped / abandoned.
 
 Fires on `task.results.ready`. Only evaluates when ALL tasks for the
-strategy are terminal (complete or failed); otherwise no-ops and
-waits for the next tick.
+strategy are terminal; otherwise no-ops.
 
-The LLM sees the strategy's name + rationale, the prior tasks and
-their results, and decides:
-  - complete: strategy is sufficiently answered.
-  - needs_more_tasks: with `feedback` describing what's still missing.
-  - abandon: with `reason` why the strategy can't be completed.
+Four possible outcomes:
+  - complete   : LLM judged the strategy sufficiently answered.
+  - needs_more : LLM wants follow-up tasks (one more round).
+  - capped     : External cap (budget or max-rounds) cut short, BUT the
+                 strategy gathered at least one claim. Data still
+                 included in the memo with a caveat.
+  - abandoned  : LLM said abandon, OR a cap hit BEFORE any usable
+                 claim was extracted.
 
-Hard caps:
-  - round_count >= max_rounds (3) forces complete.
-  - budget exhausted forces abandon.
+The synthesizer treats `complete` and `capped` as "include in memo"
+and `abandoned` as "outcomes-line only".
 """
 from __future__ import annotations
 
@@ -23,6 +24,12 @@ from ._helpers import budget_exhausted, view_objects
 
 
 MAX_ROUNDS = 3  # max planning rounds per strategy (initial + follow-ups)
+
+
+def _strategy_has_claims(ctx, sid: str) -> bool:
+    return any(
+        c.data.get("strategy_id") == sid for c in view_objects(ctx, "claim")
+    )
 
 
 @llm_behavior(
@@ -63,35 +70,105 @@ def strategy_evaluator(event, graph, ctx, llm_output: StrategyVerdict):
         return
 
     rounds = int(strat.data.get("round_count", 0))
+    has_claims = _strategy_has_claims(ctx, sid)
+    budget_capped = budget_exhausted(ctx)
+    rounds_capped = (
+        rounds >= MAX_ROUNDS and llm_output.verdict == "needs_more_tasks"
+    )
 
-    # Force-terminal overrides on verdict.
-    force_complete = rounds >= MAX_ROUNDS
-    force_abandon = budget_exhausted(ctx)
+    # Branch ordering:
+    # 1. LLM explicit abandon -- always wins.
+    # 2. Budget trip -- capped if we have claims, else abandoned.
+    # 3. Max-rounds trip on needs_more -- capped if we have claims, else abandoned.
+    # 4. LLM complete -- complete.
+    # 5. LLM needs_more + rounds_remaining -- emit follow-up event.
+    # 6. Fallback -- complete (LLM noise).
 
-    if force_abandon:
-        verdict = "abandon"
-        feedback = "budget exhausted"
-    elif force_complete:
-        verdict = "complete"
-        feedback = "max rounds reached; completing with available evidence"
-    else:
-        verdict = llm_output.verdict
-        feedback = llm_output.feedback or llm_output.reason
-
-    if verdict == "complete":
-        graph.patch_object(sid, {"status": "complete"})
-        graph.emit("strategy.complete", {"strategy_id": sid, "summary": feedback})
-    elif verdict == "abandon":
-        graph.patch_object(
-            sid, {"status": "abandoned", "abandon_reason": feedback or "abandoned"}
+    if llm_output.verdict == "abandon":
+        _set_terminal(graph, sid, "abandoned", llm_output.reason or "abandoned")
+        graph.emit(
+            "strategy.abandoned",
+            {"strategy_id": sid, "reason": llm_output.reason or "abandoned"},
         )
-        graph.emit("strategy.abandoned", {"strategy_id": sid, "reason": feedback})
-    else:  # needs_more_tasks
+        return
+
+    if budget_capped:
+        if has_claims:
+            _set_terminal(graph, sid, "capped", "budget exhausted")
+            graph.emit(
+                "strategy.capped",
+                {"strategy_id": sid, "reason": "budget exhausted"},
+            )
+        else:
+            _set_terminal(
+                graph,
+                sid,
+                "abandoned",
+                "budget exhausted before any usable evidence",
+            )
+            graph.emit(
+                "strategy.abandoned",
+                {
+                    "strategy_id": sid,
+                    "reason": "budget exhausted before any usable evidence",
+                },
+            )
+        return
+
+    if rounds_capped:
+        if has_claims:
+            _set_terminal(graph, sid, "capped", "max rounds reached")
+            graph.emit(
+                "strategy.capped",
+                {"strategy_id": sid, "reason": "max rounds reached"},
+            )
+        else:
+            _set_terminal(
+                graph,
+                sid,
+                "abandoned",
+                "max rounds reached without usable evidence",
+            )
+            graph.emit(
+                "strategy.abandoned",
+                {
+                    "strategy_id": sid,
+                    "reason": "max rounds reached without usable evidence",
+                },
+            )
+        return
+
+    if llm_output.verdict == "complete":
+        _set_terminal(graph, sid, "complete", llm_output.feedback)
+        graph.emit(
+            "strategy.complete",
+            {"strategy_id": sid, "summary": llm_output.feedback},
+        )
+        return
+
+    if llm_output.verdict == "needs_more_tasks":
+        # rounds < MAX_ROUNDS (rounds_capped already handled above)
+        prior_task_ids = [t.id for t in tasks]
         graph.emit(
             "strategy.needs_more_tasks",
             {
                 "strategy_id": sid,
-                "feedback": feedback,
-                "prior_task_ids": [t.id for t in tasks],
+                "feedback": llm_output.feedback,
+                "prior_task_ids": prior_task_ids,
             },
         )
+        return
+
+    # Fallback: LLM produced a verdict outside the enum somehow.
+    _set_terminal(graph, sid, "complete", "completed (fallback)")
+    graph.emit(
+        "strategy.complete",
+        {"strategy_id": sid, "summary": "completed (fallback)"},
+    )
+
+
+def _set_terminal(graph, sid: str, status: str, reason: str) -> None:
+    patch = {"status": status}
+    if status != "complete":
+        patch["abandon_reason"] = reason
+    graph.patch_object(sid, patch)

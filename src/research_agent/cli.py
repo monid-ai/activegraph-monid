@@ -16,20 +16,22 @@ from activegraph.llm import AnthropicProvider, RecordingLLMProvider
 from .behaviors import (
     DEFAULT_MAX_STRATEGIES,
     DEFAULT_MAX_TASKS_PER_STRATEGY,
+    DEFAULT_MEMO_MODE,
     register_all,
 )
 
 
-# Each monid call generates roughly this many activegraph events
-# (LLM calls + tool calls + extractor fan-out + book-keeping). Used
-# to auto-scale --max-events from --max-total-endpoints when the user
-# leaves --max-events unset.
+# Each monid call generates roughly this many activegraph events.
 EVENTS_PER_ENDPOINT = 65
 EVENTS_FIXED_OVERHEAD = 250
+# When max_total_endpoints == 0 (unlimited) and the user does not pass
+# --max-events, we use this as the framework safety cap.
+EVENTS_UNLIMITED_DEFAULT = 5000
 
 
 def _auto_event_budget(max_total_endpoints: int) -> int:
-    """Suggested activegraph event budget for a given monid cap."""
+    if max_total_endpoints == 0:
+        return EVENTS_UNLIMITED_DEFAULT
     return EVENTS_FIXED_OVERHEAD + max_total_endpoints * EVENTS_PER_ENDPOINT
 
 
@@ -55,17 +57,31 @@ def _auto_event_budget(max_total_endpoints: int) -> int:
 )
 @click.option(
     "--max-total-endpoints",
-    default=10,
+    default=0,
     type=int,
     show_default=True,
-    help="Hard cap on total monid endpoint runs across the whole session.",
+    help=(
+        "Hard cap on total monid runs. 0 = unlimited (the USD budget still "
+        "applies)."
+    ),
 )
 @click.option(
     "--budget-monid-usd",
     default=1.50,
     type=float,
     show_default=True,
-    help="Hard cap on total monid spend.",
+    help="Hard cap on total monid spend (always active).",
+)
+@click.option(
+    "--memo",
+    "memo_mode",
+    type=click.Choice(["short", "auto", "long", "detailed"]),
+    default=DEFAULT_MEMO_MODE,
+    show_default=True,
+    help=(
+        "Memo length. short=80-120w, auto=picks from claim count, "
+        "long=400-500w, detailed=600-800w."
+    ),
 )
 @click.option(
     "--max-events",
@@ -73,7 +89,8 @@ def _auto_event_budget(max_total_endpoints: int) -> int:
     type=int,
     help=(
         "Activegraph event budget. Auto-scaled from --max-total-endpoints "
-        "when unset (250 + endpoints * 65)."
+        "when unset (250 + endpoints * 65), or 5000 when endpoints are "
+        "unlimited."
     ),
 )
 @click.option(
@@ -113,6 +130,7 @@ def main(
     max_tasks_per_strategy: int,
     max_total_endpoints: int,
     budget_monid_usd: float,
+    memo_mode: str,
     max_events: int | None,
     max_seconds: int,
     max_cost_usd: float,
@@ -136,9 +154,11 @@ def main(
     register_all(
         max_strategies=max_strategies,
         max_tasks_per_strategy=max_tasks_per_strategy,
+        memo_mode=memo_mode,
     )
 
-    # Reset the watcher's friendly-id table so each CLI run starts fresh.
+    # Reset the watcher's friendly-id table + running cost so each CLI
+    # run starts fresh.
     from .behaviors.watcher import reset_friendly
 
     reset_friendly()
@@ -163,14 +183,14 @@ def main(
         },
     )
 
-    # Frame constraints are part of the system prompt on every LLM
-    # behavior. We embed the monid budget here so the decomposer and
-    # strategy_planner can plan within it.
+    endpoint_cap_str = (
+        f"\u2264{max_total_endpoints}" if max_total_endpoints > 0 else "unlimited"
+    )
     constraints = [
         (
-            f"Total monid budget: at most {max_total_endpoints} monid runs "
-            f"AND at most ${budget_monid_usd:.2f}. Plan strategies x tasks "
-            f"to stay within this."
+            f"Total monid budget: {endpoint_cap_str} monid runs AND at "
+            f"most ${budget_monid_usd:.2f}. Plan strategies x tasks to "
+            f"stay within this."
         ),
         (
             f"You may produce at most {max_strategies} strategies and at "
@@ -197,14 +217,22 @@ def main(
     click.echo(
         f"[config]   strategies\u2264{max_strategies} "
         f"tasks/strategy\u2264{max_tasks_per_strategy}  "
-        f"monid\u2264{max_total_endpoints} runs / ${budget_monid_usd:.2f}  "
-        f"events\u2264{max_events}"
+        f"monid={endpoint_cap_str} runs / ${budget_monid_usd:.2f}  "
+        f"memo={memo_mode}  events\u2264{max_events}"
     )
     runtime.run_goal(topic)
     runtime.save_state()
 
     _print_results(runtime, db)
     return 0
+
+
+def _find_budget_trip(g) -> dict | None:
+    """Return the payload of the first `budget.exhausted` event, or None."""
+    for e in g.events:
+        if e.type == "budget.exhausted":
+            return e.payload
+    return None
 
 
 def _print_results(runtime: Runtime, db: str) -> None:
@@ -226,6 +254,24 @@ def _print_results(runtime: Runtime, db: str) -> None:
                 )
 
         _print_claims_blocks(g, m.get("cited_claim_ids") or [])
+
+        trip = _find_budget_trip(g)
+        if trip is not None:
+            trip_reason = trip.get("trip_reason") or "usd"
+            if trip_reason == "endpoints":
+                summary = (
+                    f"endpoint count ({trip.get('endpoint_count')}"
+                    f"/{trip.get('limit_endpoints')})"
+                )
+            else:
+                summary = (
+                    f"USD spend (${float(trip.get('monid_spent_usd', 0)):.4f}"
+                    f"/${float(trip.get('limit_usd', 0)):.2f})"
+                )
+            click.echo(f"\nBudget trip: {summary}")
+            click.echo(
+                f"  spend at trip = ${float(trip.get('monid_spent_usd', 0)):.4f}"
+            )
 
         click.echo(
             f"\nCosts: monid=${m.get('total_monid_cost', 0):.4f}  "
