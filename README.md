@@ -11,8 +11,9 @@ A single user goal flows through eleven reactive behaviors:
 ```
 goal -> decomposer (LLM)         ->  1..N strategies
      -> strategy_planner (LLM)   ->  1..M tasks per strategy
-     -> discoverer               ->  monid /v1/discover
-     -> route_picker (LLM)       ->  pick endpoints
+                                     (each task: 1-5 tool-class queries)
+     -> discoverer               ->  monid /v1/discover (per query, union results)
+     -> route_picker (LLM)       ->  pick one endpoint
      -> inspector                ->  monid /v1/inspect
      -> input_builder (LLM)      ->  build valid params
      -> runner                   ->  monid /v1/run

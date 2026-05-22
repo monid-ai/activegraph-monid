@@ -102,7 +102,7 @@ def _auto_event_budget(max_total_endpoints: int) -> int:
 )
 @click.option(
     "--max-cost-usd",
-    default=3.00,
+    default=6.00,
     type=float,
     show_default=True,
     help="Activegraph LLM cost budget (USD).",

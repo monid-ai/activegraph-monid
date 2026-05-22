@@ -42,7 +42,7 @@ class StrategyObj(BaseModel):
 class TaskObj(BaseModel):
     strategy_id: str
     description: str
-    discover_query: str
+    discover_queries: list[str]
     status: Literal["pending", "complete", "failed"] = "pending"
     round: int = 1
 
@@ -128,10 +128,16 @@ class TaskProposal(BaseModel):
     description: str = Field(
         description="One-sentence specific question this task answers."
     )
-    discover_query: str = Field(
+    discover_queries: list[str] = Field(
+        min_length=1,
+        max_length=5,
         description=(
-            "Short noun phrase for monid discover, e.g. 'tweets about X' or "
-            "'news articles about Y'. Do NOT include quotes or punctuation."
+            "1-5 short verb-led action phrases describing what the tool does. "
+            "Each phrase is a pure capability query (e.g. 'search twitter', "
+            "'search news', 'scrape a website', 'linkedin profile search by name'). "
+            "NEVER include entity names, topic keywords, years, or adjectives. "
+            "Good: 'search the web', 'search reddit', 'enrich a person'. "
+            "Bad: 'tweets about vertical AI agents 2026', 'Feiyou Guo profile'."
         )
     )
 

@@ -28,10 +28,34 @@ _PROMPT = (
     "frame's `constraints` lists the total monid-call budget remaining; "
     "stay within it.\n\n"
     "Each task carries TWO fields:\n"
-    "  - description: one-sentence specific question this task answers\n"
-    "  - discover_query: a short noun phrase suitable for monid catalog "
-    "    search (e.g. 'tweets about X', 'news articles about Y', "
-    "    'company funding rounds', 'product reviews'). NO quotes.\n\n"
+    "  - description: one-sentence specific question this task answers.\n"
+    "  - discover_queries: a list of 1-5 SHORT VERB-LED ACTION PHRASES "
+    "    describing what TOOL the task needs. These are CAPABILITY queries "
+    "    for the monid CATALOG, NOT content queries for a search engine.\n\n"
+    "DISCOVER_QUERIES RULE (critical):\n"
+    "  The catalog you're searching contains tool descriptions like "
+    "  'search twitter', 'scrape a website', 'linkedin profile lookup'. "
+    "  The actual topic (entity names, keywords, years) goes into the "
+    "  TOOL's INPUT later — NOT the catalog query.\n\n"
+    "  GOOD discover_queries:\n"
+    "    ['search twitter']\n"
+    "    ['search news', 'search the web']\n"
+    "    ['linkedin profile search by name', 'enrich a person']\n"
+    "    ['company employee directory', 'search linkedin']\n"
+    "    ['search reddit', 'search twitter', 'search news']\n"
+    "    ['scrape a website']\n"
+    "    ['find videos on youtube', 'find videos on tiktok']\n\n"
+    "  BAD discover_queries (NEVER do this):\n"
+    "    ['tweets about vertical AI agents 2026']  ❌ topic in catalog query\n"
+    "    ['Feiyou Guo professional profile']       ❌ entity name\n"
+    "    ['Founders Inc team members']             ❌ company name\n"
+    "    ['CTO posts AI limitations gaps']         ❌ content query, no verb\n"
+    "    ['recent trending AI news']               ❌ adjectives, no source\n\n"
+    "  Rule: verb-led (search/scrape/find/fetch/enrich/list/lookup), "
+    "  names the SOURCE CLASS (twitter/news/web/reddit/linkedin/etc), "
+    "  2-6 words max, NO entity names or topic keywords.\n\n"
+    "  Each query covers ONE source class. If the task could use multiple "
+    "  source classes (e.g. twitter AND reddit), emit multiple queries.\n\n"
     "On a follow-up event (strategy.needs_more_tasks), the triggering "
     "event will contain `feedback` describing what is still missing. "
     "Propose tasks that fill that gap, NOT duplicates of prior tasks "
@@ -66,7 +90,7 @@ def make_strategy_planner(max_tasks_per_strategy: int = 3):
                 {
                     "strategy_id": strategy_id,
                     "description": t.description,
-                    "discover_query": t.discover_query,
+                    "discover_queries": t.discover_queries,
                     "status": "pending",
                     "round": round_num,
                 },
@@ -78,7 +102,7 @@ def make_strategy_planner(max_tasks_per_strategy: int = 3):
                     "task_id": task.id,
                     "strategy_id": strategy_id,
                     "description": t.description,
-                    "discover_query": t.discover_query,
+                    "discover_queries": t.discover_queries,
                 },
             )
 

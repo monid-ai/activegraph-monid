@@ -112,7 +112,7 @@ def test_types_schemas():
 
     TaskPlan2 = make_task_plan_schema(2)
     TaskPlan2.model_validate(
-        {"tasks": [{"description": "d", "discover_query": "q"}]}
+        {"tasks": [{"description": "d", "discover_queries": ["q"]}]}
     )
 
     RouteChoice.model_validate({"provider": "apify", "endpoint": "/x"})
@@ -152,8 +152,8 @@ def test_factory_caps_enforced():
         TaskPlan1.model_validate(
             {
                 "tasks": [
-                    {"description": "d1", "discover_query": "q"},
-                    {"description": "d2", "discover_query": "q"},
+                    {"description": "d1", "discover_queries": ["q"]},
+                    {"description": "d2", "discover_queries": ["q"]},
                 ]
             }
         )
